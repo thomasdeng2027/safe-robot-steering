@@ -30,7 +30,8 @@ def main():
         betas=(0.9, 0.95)
     )
     
-    env = make_libero_env(TASK_SUITE_NAME)
+    # switch task_id to random generation during training
+    env = make_libero_env(TASK_SUITE_NAME, 0)
     # factories = [libero_factory(TASK_SUITE_NAME) for _ in range(NUM_ENVS)]
     # vec_env = AsyncVectorEnv(factories)
     # print(vec_env)

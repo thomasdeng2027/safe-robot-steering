@@ -58,7 +58,7 @@ the environment for one task within the specified task suite with a random initi
 task_id is an optional int. If left as None, a random task_id will be chosen
 task_suite_name is one of libero_10, libero_spatial, etc. 
 camera_heights and camera_widths determine image resolution of agentview observations per time step"""
-def make_libero_env(task_suite_name, task_id=None, camera_heights=256, camera_widths=256):
+def make_libero_env(task_suite_name, task_id=None, camera_heights=256, camera_widths=256, vectorized=False):
     benchmark_dict = benchmark.get_benchmark_dict()
     task_suite = benchmark_dict[task_suite_name]()
 
@@ -77,7 +77,10 @@ def make_libero_env(task_suite_name, task_id=None, camera_heights=256, camera_wi
         "camera_heights": camera_heights,
         "camera_widths": camera_widths,
     }
-    env = VectorizedOffScreenEnv(task, task_id, **env_args)
+    if vectorized:
+        env = VectorizedOffScreenEnv(task, task_id, **env_args)
+    else:
+        env = OffScreenRenderEnv(**env_args)
     init_states = task_suite.get_task_init_states(task_id) # for benchmarking purpose, we fix the a set of initial states
     if init_states is not None and len(init_states) > 0:
         random_id = np.random.randint(len(init_states))
@@ -91,6 +94,6 @@ def make_libero_env(task_suite_name, task_id=None, camera_heights=256, camera_wi
 # sub environment creation callable for gymnasium vectorization 
 def libero_factory(task_suite_name, task_id=None, camera_heights=256, camera_widths=256):
     def _thunk():
-        env = make_libero_env(task_suite_name, task_id, camera_heights, camera_widths)
+        env = make_libero_env(task_suite_name, task_id, camera_heights, camera_widths, vectorized=True)
         return env
     return _thunk
