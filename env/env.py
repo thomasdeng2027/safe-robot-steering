@@ -42,7 +42,6 @@ def libero_factory(task_suite_name, task_id=None, camera_heights=256, camera_wid
 # take before image of environment, move robot around, take after image
 def test_libero_env(env, num_steps=50):
     from PIL import Image
-    import numpy as np
     obs = env.reset()
     # flip because OpenGL and PIL coordinate systems are upside down of each other
     Image.fromarray(np.flipud(obs["agentview_image"])).save("before.png")
@@ -55,6 +54,12 @@ def test_libero_env(env, num_steps=50):
         final_obs = obs
     Image.fromarray(np.flipud(final_obs["agentview_image"])).save("after.png")
     print(f"Saved after image")
+
+def snapshot_obs(obs, save_path):
+    from PIL import Image
+    # flip because OpenGL and PIL coordinate systems are upside down of each other
+    Image.fromarray(np.flipud(obs["agentview_image"])).save(save_path)
+    print(f"Saved agentview image to {save_path}")
 
 """Implementation based off of what's in libero's README getting started section. This function sets up
 the environment for one task within the specified task suite with a random initialization
