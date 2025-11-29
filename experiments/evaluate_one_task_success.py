@@ -2,10 +2,12 @@
 
 import torch
 from model.smolvla_policy import SmolVLALiberoPolicy
-from env.env import make_libero_env, snapshot_obs
+from env.env import make_libero_env, snapshot_obs, get_agentview_frame, get_wrist_frame
+import imageio
+FPS = 60
 
-TASK_SUITE_NAME = "libero_10"
-STEPS = 280 #lerobot libero default
+TASK_SUITE_NAME = "libero_spatial" 
+STEPS = 280 #lerobot libero default for object, 520 is default for long
 def main():
     # Load SmolVLA policy
     policy = SmolVLALiberoPolicy(
@@ -24,6 +26,20 @@ def main():
     obs = env.reset()
     snapshot_obs(obs, "before.png")
     
+    agentview_path = "agentview.mp4"
+    wristcam_path = "wristcam.mp4"
+
+    agent_writer = imageio.get_writer(agentview_path, fps=FPS)
+    wrist_writer = imageio.get_writer(wristcam_path, fps=FPS)
+
+    print(f"Recording agentview -> {agentview_path}")
+    print(f"Recording wristcam -> {wristcam_path}")
+    
+
+    # Write first frames
+    agent_writer.append_data(get_agentview_frame(obs))
+    wrist_writer.append_data(get_wrist_frame(obs))
+    
     # simple rollout. For GRPO we can rollout with no_grad but will need grads when recomputing new model log densities for chosen actions
     for step in range(STEPS):
         with torch.no_grad():
@@ -32,6 +48,9 @@ def main():
         obs, reward, done, info = env.step(action)
         
         print(f"Step {step} | Reward: {reward:.3f}")
+            
+        agent_writer.append_data(get_agentview_frame(obs))
+        wrist_writer.append_data(get_wrist_frame(obs))
         if done:
             break
 

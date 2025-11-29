@@ -32,6 +32,7 @@ class SmolVLALiberoPolicy:
         self.device = device
         self.policy = SmolVLAPolicy.from_pretrained(model_name)
         self.policy.to(device)
+        self.policy.eval() 
         self.parameters = self.policy.parameters 
         self.img_transform = v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)])
         # tokenizer as determined by the tokenization step of the preprocessing pipeline defined in make_smolvla_pre_post_processors
@@ -100,7 +101,7 @@ class SmolVLALiberoPolicy:
        
         # the names for the keys must match what's specified in the SmolVLAConfig dataclass
         return {
-            "observation.images.image1": agentview_img,
+            "observation.images.image": agentview_img,
             "observation.images.image2": eye_img,
             "observation.state": state,
             "observation.language.tokens": tokens,
