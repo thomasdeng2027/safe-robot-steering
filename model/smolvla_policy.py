@@ -17,6 +17,9 @@ from robosuite.utils.transform_utils import quat2axisangle
 # NOTE: for some reason accelerate may try to distribute the model during runtime, leading to device mismatches. If this happens,
 # set CUDA_VISIBLE_DEVICES to one device
 
+MIN_LOG_STD = -20.0
+MAX_LOG_STD = 2.0
+
 class SmolVLALiberoPolicy:
     """
     Adapter that converts LIBERO's obs format to the LeRobot SmolVLA format.
@@ -163,6 +166,41 @@ class SmolVLALiberoPolicy:
         mean = self._unnormalize_action(mean) # because treating pretrained action outputs as means, need to unnormalize means similarly
         
         return mean, log_std
+
+    def get_action_distr(self, obs, language):
+        mean, log_std = self.get_action_distr_params(obs, language)
+
+        # std head outputs log std so it can output many real numbers. Clamp to avoid excessively small or large stds
+        log_std = torch.clamp(log_std, MIN_LOG_STD, MAX_LOG_STD)
+        std = torch.exp(log_std)
+        distr = torch.distributions.Normal(mean, std)
+
+        return distr
+
+    def calculate_log_prob(self, distr, unsquished_action, squished_action):
+        # tanh squish correction
+        log_prob_unsquished = distr.log_prob(unsquished_action).sum(dim=-1)
+        correction = torch.sum(torch.log(1 - squished_action.pow(2) + self.eps), dim=-1)
+        log_prob = log_prob_unsquished - correction
+        return log_prob
+
+    # for when we need probability ratios. This uses self's outputted distribution given obs and language to calculate
+    # the probability 
+    def get_action_prob(self, obs, language, unsquished_action):
+        distr = self.get_action_distr(obs, language)
+        return self.calculate_log_prob(distr, unsquished_action, torch.tanh(unsquished_action))
+    
+    def sample_action(self, obs, language):
+        distr = self.get_action_distr(obs, language)
+
+        # tanh squish action to -1, 1. Better than clamping because it just squishes the Gaussian, keeping it entirely differentiable
+        unsquished_action = distr.rsample()
+        action = torch.tanh(unsquished_action)
+
+        log_prob = self.calculate_log_prob(distr, unsquished_action, action)
+
+        # return unsquished_action to use it in calculating probability ratio because can't always invert squished to get unsquished term needed in correction
+        return action, log_prob, unsquished_action
 
     @torch.no_grad()
     def reset(self):
