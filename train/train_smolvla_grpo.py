@@ -36,19 +36,59 @@ def main():
     # print(vec_env)
 
     policy_old = copy.deepcopy(policy)
-    obs = env.reset()
+
     
+
+
+        # TODO: autocast, compile (might only be able to compile certain parts since some loop iterations)
+
+def rollout_one_trajectory(env, policy_old, language):
+    """Run one full episode using policy_old.
+    Return a dict with:
+        - obs: list of observations
+        - actions: list of actions
+        - logprobs: list of log-probabilities from policy_old
+        - reward: episodic reward (scalar)
+    """
+    obs = env.reset()
+    traj_obs = []
+    traj_actions = []
+    traj_logprobs = []
+    total_reward = 0
+
     for step in range(MAX_STEPS):
         with torch.no_grad():
             action, log_prob, unsquished_action = policy_old.sample_action(obs, language)
-            action = action.cpu().clone().detach().tolist()[0]
+            
+        action = action.cpu().clone().detach().tolist()[0]
+        traj_actions.append(unsquished_action)
+        traj_logprobs.append(log_prob)
+
         obs, reward, done, info = env.step(action)
-        
+        traj_obs.append(obs)
+        total_reward += reward        
         print(f"Step {step} | Reward: {reward:.3f}")
         if done:
             break
+    return {
+        "obs": traj_obs,
+        "actions": traj_actions,
+        "logprobs": traj_logprobs,
+        "reward": total_reward
+    }
 
-        # TODO: autocast, compile (might only be able to compile certain parts since some loop iterations)
+def sample_group_trajectories(env, policy_old, language, G):
+    """
+    Samples G trajectories for a single GRPO group.
+    Returns a list of dicts from rollout_one_trajectory.
+    """
+    rollouts = []
+    for _ in range(G):
+        rollouts.append(rollout_one_trajectory(env, policy_old, language))
+    return rollouts
+
+        
+
 
 if __name__ == "__main__":
     main()
