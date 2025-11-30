@@ -1,124 +1,148 @@
 import torch
-from torch import nn
-import numpy as np
-# torch.serialization.add_safe_globals([np.core.multiarray._reconstruct])
-from model.smolvla_policy import SmolVLALiberoPolicy
-# from gymnasium.vector import AsyncVectorEnv
-# from env import libero_factory
 import torch.nn.functional as F
-from env.env import make_libero_env
+import numpy as np
+import argparse
 import copy
 
-# TODO: if want to vectorize envs, finish that by figuring out how to map LIBERO observations to SmolVLA compatible ones in env.py
-# TODO: but probably for now, get things working with one environment first. Need to figure out SmolVLA input/output format exactly
-# (may expect multiple camera views, different amount of joints, etc.)
+from model.smolvla_policy import SmolVLALiberoPolicy
+from env.env import make_libero_env
 
-TASK_SUITE_NAME = "libero_10" # long-range tasks
-NUM_ENVS = 8
 MAX_STEPS = 520
+GROUP_SIZE = 4
+UPDATE_EPOCHS = 2
+GRPO_EPSILON = 0.2
 
-def main():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    policy = SmolVLALiberoPolicy(
-        "HuggingFaceVLA/smolvla_libero", device=device
-    )
-
-    optimizer = torch.optim.AdamW(
-        policy.parameters(),
-        lr=1e-5,
-        betas=(0.9, 0.95)
-    )
-    
-    # switch task_id to random generation during training
-    env, language = make_libero_env(TASK_SUITE_NAME)
-    # factories = [libero_factory(TASK_SUITE_NAME) for _ in range(NUM_ENVS)]
-    # vec_env = AsyncVectorEnv(factories)
-    # print(vec_env)
-
-    policy_old = copy.deepcopy(policy)
-
-    
-
-
-        # TODO: autocast, compile (might only be able to compile certain parts since some loop iterations)
 
 def rollout_one_trajectory(env, policy_old, language):
-    """Run one full episode using policy_old.
-    Return a dict with:
-        - obs: list of observations
-        - actions: list of actions
-        - logprobs: list of log-probabilities from policy_old
-        - reward: episodic reward (scalar)
-    """
     obs = env.reset()
-    traj_obs = []
-    traj_actions = []
-    traj_logprobs = []
-    total_reward = 0
+    traj_obs, traj_actions, traj_logprobs = [], [], []
+    total_reward = 0.0
 
     for step in range(MAX_STEPS):
         with torch.no_grad():
             action, log_prob, unsquished_action = policy_old.sample_action(obs, language)
-            
-        action = action.cpu().clone().detach().tolist()[0]
-        traj_actions.append(unsquished_action)
-        traj_logprobs.append(log_prob)
 
-        obs, reward, done, info = env.step(action)
+        env_action = action.cpu().numpy()[0]
         traj_obs.append(obs)
-        total_reward += reward        
-        print(f"Step {step} | Reward: {reward:.3f}")
+        traj_actions.append(unsquished_action.detach())
+        traj_logprobs.append(log_prob.detach())
+
+        obs, reward, done, info = env.step(env_action)
+        total_reward += float(reward)
         if done:
             break
+
     return {
         "obs": traj_obs,
         "actions": traj_actions,
         "logprobs": traj_logprobs,
-        "reward": total_reward
+        "reward": total_reward,
+        "language": language,
     }
 
+
 def sample_group_trajectories(env, policy_old, language, G):
-    """
-    Samples G trajectories for a single GRPO group.
-    Returns a list of dicts from rollout_one_trajectory.
-    """
-    rollouts = []
-    for _ in range(G):
-        rollouts.append(rollout_one_trajectory(env, policy_old, language))
-    return rollouts
+    return [rollout_one_trajectory(env, policy_old, language) for _ in range(G)]
+
 
 def compute_group_advantages(trajs):
-
-    rewards = torch.tensor([traj["reward"] for traj in trajs], dtype=torch.float32)
+    rewards = torch.tensor([t["reward"] for t in trajs], dtype=torch.float32)
     mean_r = rewards.mean()
-    print(rewards)
-    advantages = (rewards - mean_r)/(rewards.std() + 1e-8)
-    return advantages
-
-def compute_grpo_objective(theta_logits, rollouts, old_policy_log_probs, advantages, epsilon, num_groups):
-    theta_log_probs = F.log_softmax(theta_logits, dim=-1)
-    theta_log_probs = torch.gather(theta_log_probs, dim=-1, index=rollouts.unsqueeze(-1)) #??? not sure if i have to unsqueeze or not
-    theta_log_probs = theta_log_probs.squeeze(-1) # remove dimension added for dimensions to match (which gather needs)
-    # left shift old_policy to align with next token distributions from policy_theta
-
-    ratios = torch.exp(theta_log_probs - old_policy_log_probs)
-    unclipped = ratios * advantages.unsqueeze(1) # will keep for now, not sure if it has to stay there
-    clipped = torch.clip(ratios, min=(1 - epsilon), max=(1 + epsilon)) * advantages.unsqueeze(1)
-    # rollout_attention_mask works here since it marks every position to make a prediction at
-
-    grpo_objective = torch.min(unclipped, clipped)
-    # average over each rollout (note averages over rollouts then groups have to be separate; can't just do
-    grpo_objective = torch.mean(grpo_objective, dim=-1) 
-    # average over groups (not over all rollouts)
-    grpo_objective = torch.sum(grpo_objective) / num_groups
-    return grpo_objective
+    std_r = rewards.std()
+    return (rewards - mean_r) / (std_r + 1e-8)
 
 
+def compute_grpo_loss(policy_theta, policy_old, trajs, advantages, epsilon):
+    group_losses = []
+
+    for i, traj in enumerate(trajs):
+        A_i = advantages[i]
+        step_losses = []
+        lang = traj["language"]
+
+        for obs_t, unsquished_action_t, old_lp_t in zip(
+            traj["obs"], traj["actions"], traj["logprobs"]
+        ):
+            new_lp = policy_theta.get_action_prob(obs_t, lang, unsquished_action_t.to(policy_theta.device))
+            ratio = torch.exp(new_lp - old_lp_t.to(policy_theta.device))
+
+            unclipped = ratio * A_i
+            clipped = torch.clamp(ratio, 1 - epsilon, 1 + epsilon) * A_i
+            step_losses.append(-torch.min(unclipped, clipped))
+
+        traj_loss = torch.stack(step_losses).mean()
+        group_losses.append(traj_loss)
+
+    return torch.stack(group_losses).mean()
 
 
+def collect_batch(env_factory, languages, batch_size, policy_old):
+    batch = []
+    for i in range(batch_size):
+        env, lang = env_factory()  # new task each time
+        rollout_group = sample_group_trajectories(env, policy_old, lang, GROUP_SIZE)
+        advantages = compute_group_advantages(rollout_group)
+        batch.append((rollout_group, advantages, lang))
+        env.close()
+    return batch
 
-        
+
+def train_grpo(args):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    policy = SmolVLALiberoPolicy("HuggingFaceVLA/smolvla_libero", device=device)
+    policy.set_log_std(-3.0)
+
+    optimizer = torch.optim.AdamW(
+        policy.policy.parameters(),
+        lr=args.lr,
+        betas=(0.9, 0.95)
+    )
+
+    def env_factory():
+        return make_libero_env(args.task_suite)
+
+    policy_old = copy.deepcopy(policy)
+    policy_old.eval()
+
+    for update in range(args.num_updates):
+        batch = collect_batch(env_factory, None, args.batch_size, policy_old)
+        policy.train()
+
+        epoch_losses = []
+        for _ in range(UPDATE_EPOCHS):
+            total_loss = 0.0
+            for rollout_group, advantages, lang in batch:
+                loss = compute_grpo_loss(policy, policy_old, rollout_group, advantages, GRPO_EPSILON)
+                optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(policy.policy.parameters(), 1.0)
+                optimizer.step()
+                total_loss += loss.item()
+
+            epoch_losses.append(total_loss / len(batch))
+
+        avg_loss = np.mean(epoch_losses)
+        avg_reward = np.mean([np.mean([t["reward"] for t in g]) for g, _, _ in batch])
+
+        print(f"[Update {update}] loss={avg_loss:.4f}, avg_reward={avg_reward:.3f}")
+
+        policy_old = copy.deepcopy(policy)
+        policy_old.eval()
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--task-suite", type=str, default="libero_10")
+    parser.add_argument("--batch-size", type=int, default=2)     # number of tasks per update
+    parser.add_argument("--lr", type=float, default=1e-5)
+    parser.add_argument("--num-updates", type=int, default=200)
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    train_grpo(args)
 
 
 if __name__ == "__main__":
