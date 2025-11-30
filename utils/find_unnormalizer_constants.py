@@ -1,5 +1,4 @@
 from safetensors.torch import load_file
-import torch
 
 def obtain_dataset_unnormalizer_stats():
 

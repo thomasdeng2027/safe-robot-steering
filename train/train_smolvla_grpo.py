@@ -2,10 +2,11 @@ import torch
 from torch import nn
 import numpy as np
 # torch.serialization.add_safe_globals([np.core.multiarray._reconstruct])
-from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+from model.smolvla_policy import SmolVLALiberoPolicy
 # from gymnasium.vector import AsyncVectorEnv
 # from env import libero_factory
 from env.env import make_libero_env
+import copy
 
 # TODO: if want to vectorize envs, finish that by figuring out how to map LIBERO observations to SmolVLA compatible ones in env.py
 # TODO: but probably for now, get things working with one environment first. Need to figure out SmolVLA input/output format exactly
@@ -13,17 +14,14 @@ from env.env import make_libero_env
 
 TASK_SUITE_NAME = "libero_10" # long-range tasks
 NUM_ENVS = 8
+MAX_STEPS = 520
 
 def main():
-    # DEBUG
-    # policy = nn.Linear(768, 1)
-    policy = SmolVLAPolicy.from_pretrained(
-       "HuggingFaceVLA/smolvla_libero")
-   
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    policy.to(device)
 
-    # policy.train()
+    policy = SmolVLALiberoPolicy(
+        "HuggingFaceVLA/smolvla_libero", device=device
+    )
 
     optimizer = torch.optim.AdamW(
         policy.parameters(),
@@ -32,29 +30,25 @@ def main():
     )
     
     # switch task_id to random generation during training
-    env = make_libero_env(TASK_SUITE_NAME)
+    env, language = make_libero_env(TASK_SUITE_NAME)
     # factories = [libero_factory(TASK_SUITE_NAME) for _ in range(NUM_ENVS)]
     # vec_env = AsyncVectorEnv(factories)
     # print(vec_env)
-    
-    policy.eval()
 
+    policy_old = copy.deepcopy(policy)
     obs = env.reset()
     
-    for t in range(50):
-        pixel_values = obs.pixel_values.to(device)
-        prompts = obs.prompts  # list of strings
-        
+    for step in range(MAX_STEPS):
         with torch.no_grad():
-            action_output = policy(pixel_values=pixel_values, prompts=prompts)
+            action, log_prob, unsquished_action = policy_old.sample_action(obs, language)
+            action = action.cpu().clone().detach().tolist()[0]
+        obs, reward, done, info = env.step(action)
         
-        actions = action_output["actions"].cpu().numpy()
-        
-        obs, rewards, dones, truncated, info = env.step(actions)
-        
-        if dones.any():
-            print("Episode ended:", dones)
+        print(f"Step {step} | Reward: {reward:.3f}")
+        if done:
             break
+
+        # TODO: autocast, compile (might only be able to compile certain parts since some loop iterations)
 
 if __name__ == "__main__":
     main()

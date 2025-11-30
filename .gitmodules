@@ -1,6 +1,6 @@
-[submodule "lerobot"]
-	path = lerobot-local
-	url = https://github.com/huggingface/lerobot
 [submodule "LIBERO"]
 	path = LIBERO
-	url = https://github.com/Lifelong-Robot-Learning/LIBERO
+	url = https://github.com/jsnchon/LIBERO
+[submodule "lerobot-local"]
+	path = lerobot-local
+	url = https://github.com/jsnchon/lerobot
