@@ -5,6 +5,7 @@ import numpy as np
 from model.smolvla_policy import SmolVLALiberoPolicy
 # from gymnasium.vector import AsyncVectorEnv
 # from env import libero_factory
+import torch.nn.functional as F
 from env.env import make_libero_env
 import copy
 
@@ -86,6 +87,36 @@ def sample_group_trajectories(env, policy_old, language, G):
     for _ in range(G):
         rollouts.append(rollout_one_trajectory(env, policy_old, language))
     return rollouts
+
+def compute_group_advantages(trajs):
+
+    rewards = torch.tensor([traj["reward"] for traj in trajs], dtype=torch.float32)
+    mean_r = rewards.mean()
+    print(rewards)
+    advantages = (rewards - mean_r)/(rewards.std() + 1e-8)
+    return advantages
+
+def compute_grpo_objective(theta_logits, rollouts, old_policy_log_probs, advantages, epsilon, num_groups):
+    theta_log_probs = F.log_softmax(theta_logits, dim=-1)
+    theta_log_probs = torch.gather(theta_log_probs, dim=-1, index=rollouts.unsqueeze(-1)) #??? not sure if i have to unsqueeze or not
+    theta_log_probs = theta_log_probs.squeeze(-1) # remove dimension added for dimensions to match (which gather needs)
+    # left shift old_policy to align with next token distributions from policy_theta
+
+    ratios = torch.exp(theta_log_probs - old_policy_log_probs)
+    unclipped = ratios * advantages.unsqueeze(1) # will keep for now, not sure if it has to stay there
+    clipped = torch.clip(ratios, min=(1 - epsilon), max=(1 + epsilon)) * advantages.unsqueeze(1)
+    # rollout_attention_mask works here since it marks every position to make a prediction at
+
+    grpo_objective = torch.min(unclipped, clipped)
+    # average over each rollout (note averages over rollouts then groups have to be separate; can't just do
+    grpo_objective = torch.mean(grpo_objective, dim=-1) 
+    # average over groups (not over all rollouts)
+    grpo_objective = torch.sum(grpo_objective) / num_groups
+    return grpo_objective
+
+
+
+
 
         
 
