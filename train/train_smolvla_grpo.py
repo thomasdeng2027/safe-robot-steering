@@ -56,5 +56,8 @@ def main():
             print("Episode ended:", dones)
             break
 
+
+        # TODO: autocast, compile (might only be able to compile certain parts since some loop iterations)
+
 if __name__ == "__main__":
     main()

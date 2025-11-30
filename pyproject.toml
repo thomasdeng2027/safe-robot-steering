@@ -13,13 +13,13 @@ dependencies = [
     "gym (>=0.26.2,<0.27.0)",
     "transforms3d (>=0.4.2,<0.5.0)",
     "transformers (>=4.57.3,<5.0.0)",
-    "lerobot @ file:///home/navlab-aa290/tdeng/safe-robot-steering/lerobot-local",
     "imageio (>=2.37.2,<3.0.0)",
+    "lerobot @ file:///home/navlab-aa290/jchon/safe-robot-steering/lerobot-local",
 ]
 
 # having this or not doesn't appear to matter, only running poetry add ./libero-local does. but this is weird
 [tool.poetry.dependencies] 
-lerobot = { path = "lerobot-local", develop = true }
+lerobot = {develop = true}
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

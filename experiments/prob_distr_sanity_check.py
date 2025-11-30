@@ -12,18 +12,10 @@ STEPS = 280 #lerobot libero default for object, 520 is default for long
 def main():
     print("CUDA_VISIBLE_DEVICES:", os.environ.get("CUDA_VISIBLE_DEVICES"))
     print("torch.cuda.device_count():", torch.cuda.device_count())
-    assert torch.cuda.device_count() == 1, "More than one CUDA device available which will lead to runtime device mismatches"
 
     # Load SmolVLA policy
     policy = SmolVLALiberoPolicy(
         "HuggingFaceVLA/smolvla_libero", device="cuda"
-    )
-
-    # If you want to train it (e.g., GRPO)
-    optimizer = torch.optim.AdamW(
-        policy.parameters(),
-        lr=1e-5,
-        betas=(0.9, 0.95)
     )
 
     env, language = make_libero_env(TASK_SUITE_NAME, task_id=1)
@@ -44,10 +36,11 @@ def main():
     agent_writer.append_data(get_agentview_frame(obs))
     wrist_writer.append_data(get_wrist_frame(obs))
     
-    # simple rollout. For GRPO we can rollout with no_grad but will need grads when recomputing new model log densities for chosen actions
+    # because we're treating pretrained action outputs as means, treating the means from the GRPO pathway as actions
+    # should lead to the same behavior as just choosing actions (after clamping since we don't clamp means)
     for step in range(STEPS):
         with torch.no_grad():
-            action = policy.get_action(obs, language)
+            action, _ = policy.get_action_distr_params(obs, language)
             action = action.cpu().clone().detach().tolist()[0]
         obs, reward, done, info = env.step(action)
         

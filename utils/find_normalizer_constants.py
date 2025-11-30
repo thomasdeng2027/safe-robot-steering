@@ -1,5 +1,4 @@
 from safetensors.torch import load_file
-import torch
 
 def obtain_dataset_normalizer_stats():
     file_path = "./policy_preprocessor_step_5_normalizer_processor.safetensors"

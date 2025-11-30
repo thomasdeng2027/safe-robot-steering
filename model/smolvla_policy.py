@@ -34,7 +34,6 @@ class SmolVLALiberoPolicy:
         self.device = device
         self.policy = SmolVLAPolicy.from_pretrained(model_name)
         self.policy.to(device)
-        self.policy.eval() 
         self.parameters = self.policy.parameters 
         self.img_transform = v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)])
         # tokenizer as determined by the tokenization step of the preprocessing pipeline defined in make_smolvla_pre_post_processors
@@ -48,16 +47,22 @@ class SmolVLALiberoPolicy:
 
         self.action_mean = obtain_dataset_unnormalizer_stats()["action.mean"]
         self.action_std =  obtain_dataset_unnormalizer_stats()["action.std"]
+        self.action_std = self.action_std.to(self.device)
+        self.action_mean = self.action_mean.to(self.device)
         self.eps = 1e-8
 
-    def _extract_images(self, obs):
-        agentview_img = obs["agentview_image"]       # (H,W,3)
+    def train(self):
+        self.policy.train()
 
+    def eval(self):
+        self.policy.eval()
+
+    def _extract_images(self, obs):
+        agentview_img = obs["agentview_image"]        # (H,W,3)
         eye_img = obs["robot0_eye_in_hand_image"]     # (H,W,3)
 
-        agentview_img = np.fliplr(np.flipud(obs["agentview_image"]).copy()).copy() # could be inefficient not sure
-        eye_img = np.fliplr(np.flipud(obs["robot0_eye_in_hand_image"]).copy()).copy()
-
+        agentview_img = np.fliplr(np.flipud(agentview_img).copy()).copy() # could be inefficient not sure
+        eye_img = np.fliplr(np.flipud(eye_img).copy()).copy()
 
         agentview_img = self.img_transform(agentview_img)
         eye_img = self.img_transform(eye_img)
@@ -65,7 +70,7 @@ class SmolVLALiberoPolicy:
         return agentview_img, eye_img
 
     def _extract_state(self, obs):
-        pos = obs["robot0_eef_pos"]                  # (3,) #from lerobot make_env
+        pos = obs["robot0_eef_pos"]                  # (3,) from lerobot make_env
         quat = obs["robot0_eef_quat"]                # (4,)
         axis_angle = quat2axisangle(quat)            # (3,)
         g0, g1 = obs["robot0_gripper_qpos"]          # (2,)
@@ -77,6 +82,7 @@ class SmolVLALiberoPolicy:
 
         normalized_state = self._normalize_state(state)
         return normalized_state
+
     def _normalize_state(self, state_raw):
         """
         Normalize the 8D state vector using the dataset statistics stored
@@ -86,11 +92,7 @@ class SmolVLALiberoPolicy:
         if not isinstance(state_raw, torch.Tensor):
             state_raw = torch.tensor(state_raw, dtype=torch.float32)
 
-
         state_norm = (state_raw - self.state_mean) / (self.state_std + self.eps)
-
-        
-
         return state_norm
     
     def _unnormalize_action(self, action_norm):
@@ -99,9 +101,6 @@ class SmolVLALiberoPolicy:
         SmolVLA outputs normalized actions → we unnormalize using:
             real = norm * std + mean
         """
-        action_norm = action_norm.to('cpu') # hacky fix but in a rush
-        self.action_std = self.action_std.to('cpu')
-        self.action_mean = self.action_mean.to('cpu')
 
         return action_norm * self.action_std + self.action_mean
     
@@ -156,6 +155,14 @@ class SmolVLALiberoPolicy:
         action = torch.clamp(action_real, -1.0, 1.0)
 
         return action
+
+    # GRPO functions
+    def get_action_distr_params(self, obs, language):
+        batch = self._build_batch(obs, language)
+        mean, log_std = self.policy.select_action_distr_params(batch)
+        mean = self._unnormalize_action(mean) # because treating pretrained action outputs as means, need to unnormalize means similarly
+        
+        return mean, log_std
 
     @torch.no_grad()
     def reset(self):
