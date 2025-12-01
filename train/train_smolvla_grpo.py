@@ -1,5 +1,4 @@
 import torch
-import torch.nn.functional as F
 import numpy as np
 import argparse
 import copy
@@ -12,6 +11,9 @@ GROUP_SIZE = 4
 UPDATE_EPOCHS = 2
 GRPO_EPSILON = 0.2
 
+# TODO: logwriting (probably with tensorboard)
+# TODO: added autocast so when running things just make sure that isn't causing any errors
+# TODO: maybe add debug logging using logging module just for quality of life
 
 def rollout_one_trajectory(env, policy_old, language):
     obs = env.reset()
@@ -19,8 +21,9 @@ def rollout_one_trajectory(env, policy_old, language):
     total_reward = 0.0
 
     for step in range(MAX_STEPS):
-        with torch.no_grad():
-            action, log_prob, unsquished_action = policy_old.sample_action(obs, language)
+        with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+            with torch.no_grad():
+                action, log_prob, unsquished_action = policy_old.sample_action(obs, language)
 
         env_action = action.cpu().numpy()[0]
         traj_obs.append(obs)
@@ -86,15 +89,24 @@ def collect_batch(env_factory, languages, batch_size, policy_old):
         env.close()
     return batch
 
+# freeze everything but lm_expert and the added log_std parameter
+def set_up_policy_grads(policy):
+    for param in policy.policy.parameters():
+        param.requires_grad = False
+    for param in policy.policy.model.vlm_with_expert.lm_expert.parameters():
+        param.requires_grad = True
+    policy.policy.model.log_std.requires_grad = True
 
 def train_grpo(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     policy = SmolVLALiberoPolicy("HuggingFaceVLA/smolvla_libero", device=device)
+    set_up_policy_grads(policy)
     policy.set_log_std(-3.0)
 
+    trainable_params = [p for p in policy.policy.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(
-        policy.policy.parameters(),
+        trainable_params,
         lr=args.lr,
         betas=(0.9, 0.95)
     )
@@ -113,11 +125,12 @@ def train_grpo(args):
         for _ in range(UPDATE_EPOCHS):
             total_loss = 0.0
             for rollout_group, advantages, lang in batch:
-                loss = compute_grpo_loss(policy, policy_old, rollout_group, advantages, GRPO_EPSILON)
-                optimizer.zero_grad()
+                with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+                    loss = compute_grpo_loss(policy, policy_old, rollout_group, advantages, GRPO_EPSILON)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(policy.policy.parameters(), 1.0)
                 optimizer.step()
+                optimizer.zero_grad()
                 total_loss += loss.item()
 
             epoch_losses.append(total_loss / len(batch))
@@ -127,7 +140,8 @@ def train_grpo(args):
 
         print(f"[Update {update}] loss={avg_loss:.4f}, avg_reward={avg_reward:.3f}")
 
-        policy_old = copy.deepcopy(policy)
+        policy_old_state_dict = {k: v.clone() for k, v in policy.policy.state_dict().items()}
+        policy_old.policy.load_state_dict(policy_old_state_dict)
         policy_old.eval()
 
 
