@@ -52,7 +52,7 @@ class SmolVLALiberoPolicy:
         self.action_mean = self.action_mean.to(self.device)
         self.eps = 1e-8
 
-    # by default set log_std to -3. Want very small stds to avoid useless jitter. GRPO will just focus on changing distribution means
+    # by default model init sets log_std to -3. Want very small stds to avoid useless jitter. GRPO will just focus on changing distribution means
     def set_log_std(self, log_std):
         new_log_std = torch.full(
             self.policy.model.log_std.shape,
