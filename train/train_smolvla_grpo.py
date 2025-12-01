@@ -209,6 +209,7 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-5)
     parser.add_argument("--num-updates", type=int, default=200)
     parser.add_argument("--save-every", type=int, default=10)
+    parser.add_argument("--save-dir", type=str, default = "checkpoints")
     return parser.parse_args()
 
 
