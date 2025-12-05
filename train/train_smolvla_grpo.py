@@ -8,6 +8,9 @@ from utils.print_gpu import print_gpu
 from model.smolvla_policy import SmolVLALiberoPolicy
 from env.env import make_libero_env
 
+import logging
+
+
 MAX_STEPS = 50
 GROUP_SIZE = 4
 UPDATE_EPOCHS = 2
@@ -16,15 +19,25 @@ EULER_STEP_NOISE_STD = 0.5
 INIT_LOG_STD = -2
 GRPO_EPSILON = 0.2
 
-# TODO: change to logging module for speed/qol
 
-def rollout_one_trajectory(env, policy_old, language,  group_num, rollout_idx=None):
-    print("-" * 60)
+logger = logging.getLogger("rollout")
+logger.setLevel(logging.INFO) 
+
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("[%(name)s] %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+
+def rollout_one_trajectory(env, policy_old, language, group_num, rollout_idx=None):
+    logger.info("-" * 60)
+
     if rollout_idx is not None:
-        print(f"[ROLLOUT {rollout_idx}] Starting rollout for language:")
+        logger.info(f"[ROLLOUT {rollout_idx}] Starting rollout for language:")
     else:
-        print(f"[ROLLOUT] Starting rollout for language:")
-    print(f"  -> {language}")
+        logger.info(f"[ROLLOUT] Starting rollout for language:")
+    logger.info(f"  -> {language}")
 
     obs = env.reset()
     traj_obs, traj_actions, traj_logprobs = [], [], []
@@ -37,9 +50,12 @@ def rollout_one_trajectory(env, policy_old, language,  group_num, rollout_idx=No
 
         env_action = action.cpu().numpy()[0]
 
-        print(f"[ROLLOUT {rollout_idx} step {step:03d} GROUP {group_num}] reward={float(total_reward):+.3f} "
-              f"action_norm={float(torch.norm(unsquished_action)):.4f} "
-              f"logp={float(log_prob):+.4f}")
+        logger.debug(
+            f"[ROLLOUT {rollout_idx} step {step:03d} GROUP {group_num}] "
+            f"reward={total_reward:+.3f} "
+            f"action_norm={torch.norm(unsquished_action):.4f} "
+            f"logp={log_prob:+.4f}"
+        )
 
         traj_obs.append(obs)
         traj_actions.append(unsquished_action.detach())
@@ -49,11 +65,11 @@ def rollout_one_trajectory(env, policy_old, language,  group_num, rollout_idx=No
         total_reward += float(reward)
 
         if done:
-            print(f"[ROLLOUT] Episode finished early at step {step}")
+            logger.info(f"[ROLLOUT] Episode finished early at step {step}")
             break
 
-    print(f"[ROLLOUT DONE] total_reward={total_reward:.3f}")
-    print("-" * 60)
+    logger.info(f"[ROLLOUT DONE] total_reward={total_reward:.3f}")
+    logger.info("-" * 60)
 
     return {
         "obs": traj_obs,
@@ -63,20 +79,24 @@ def rollout_one_trajectory(env, policy_old, language,  group_num, rollout_idx=No
         "language": language,
     }
 
-
 def sample_group_trajectories(env, policy_old, language, G, group_num):
-    print("\n" + "-" * 60)
-    print(f"[GROUP] Collecting {G} trajectories for prompt:\n  \"{language}\"")
-    print("-" * 60 + "\n")
+    logger.info("\n" + "-" * 60)
+    logger.info(f"[GROUP] Collecting {G} trajectories for prompt:\n  \"{language}\"")
+    logger.info("-" * 60 + "\n")
 
     rollouts = []
     for i in range(G):
-        rollouts.append(rollout_one_trajectory(env, policy_old, language,  group_num, rollout_idx=i + 1))
+        rollouts.append(
+            rollout_one_trajectory(
+                env, policy_old, language, group_num, rollout_idx=i + 1
+            )
+        )
 
     rewards = [r["reward"] for r in rollouts]
-    print(f"[GROUP SUMMARY] rewards={rewards}")
-    print(f"[GROUP SUMMARY] mean={np.mean(rewards):.3f}, std={np.std(rewards):.3f}")
-    print()
+
+    logger.info(f"[GROUP SUMMARY] rewards={rewards}")
+    logger.info(f"[GROUP SUMMARY] mean={np.mean(rewards):.3f}, std={np.std(rewards):.3f}")
+    logger.info("")
 
     return rollouts
 
@@ -84,17 +104,18 @@ def sample_group_trajectories(env, policy_old, language, G, group_num):
 
 def compute_group_advantages(trajs):
     rewards = torch.tensor([t["reward"] for t in trajs], dtype=torch.float32)
-    
+
     mean_r = rewards.mean()
     std_r = rewards.std()
-    mean_r = torch.nan_to_num(mean_r, nan=0.0) # is nan when there is 0 reward
-    std_r = torch.nan_to_num(std_r, nan=0.0)
+
+    # Avoid NaNs for degenerate cases (e.g., all rewards = 0)
+    mean_r = torch.nan_to_num(mean_r, nan=0.0)
+    std_r  = torch.nan_to_num(std_r, nan=0.0)
 
     advantages = (rewards - mean_r) / (std_r + 1e-8)
 
-    print("[ADVANTAGES] Rewards:", rewards.tolist())
-    print("[ADVANTAGES] Advantages:", advantages.tolist())
- 
+    logger.info(f"[ADVANTAGES] Rewards: {rewards.tolist()}")
+    logger.info(f"[ADVANTAGES] Advantages: {advantages.tolist()}")
 
     return advantages
 
@@ -164,7 +185,7 @@ def compute_grpo_loss(policy_theta, trajs, advantages, epsilon, timestep_chunk_s
 def collect_batch(env_factory, batch_size, policy_old):
     batch = []
     for group_num in range(batch_size):
-        print(f"creating batch group {group_num+1}")
+        logger.info(f"creating batch group {group_num+1}")
         env, lang = env_factory()  # new task each time
         rollout_group = sample_group_trajectories(env, policy_old, lang, GROUP_SIZE, group_num + 1)
         advantages = compute_group_advantages(rollout_group)
@@ -188,7 +209,7 @@ def train_grpo(args):
     set_up_policy_grads(policy)
     policy.set_log_std(INIT_LOG_STD)
     policy.set_euler_step_noise_std(EULER_STEP_NOISE_STD)
-    print("Set policy gradients and log std.")
+    logger.info("Set policy gradients and log std.")
     trainable_params = [p for p in policy.policy.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(
         trainable_params,
@@ -223,7 +244,7 @@ def train_grpo(args):
         avg_loss = np.mean(epoch_losses)
         avg_reward = np.mean([np.mean([t["reward"] for t in g]) for g, _ in batch])
 
-        print(f"[Update {update}] loss={avg_loss:.4f}, avg_reward={avg_reward:.3f}")
+        logger.info(f"[Update {update}] loss={avg_loss:.4f}, avg_reward={avg_reward:.3f}")
 
         writer.add_scalar("Loss/update", avg_loss, update)
         writer.add_scalar("Reward/update", avg_reward, update)
@@ -241,7 +262,7 @@ def train_grpo(args):
                 "avg_reward": avg_reward,
                 "args": vars(args),
             }, save_path)
-            print(f"[CHECKPOINT] Saved model to {save_path}")
+            logger.info(f"[CHECKPOINT] Saved model to {save_path}")
 
 
 
@@ -258,7 +279,7 @@ def parse_args():
 
 def main():
     args = parse_args()
-    print("Starting train")
+    logger.info("Starting train")
     train_grpo(args)
 
 
