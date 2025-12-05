@@ -236,8 +236,8 @@ def train_grpo(args):
 
         logger.info(f"[Update {update}] loss={avg_loss:.4f}, avg_reward={avg_reward:.3f}")
 
-        writer.add_scalar("Loss/update", avg_loss, update)
-        writer.add_scalar("Reward/update", avg_reward, update)
+        writer.add_scalar("loss/update", avg_loss, update)
+        writer.add_scalar("reward/update", avg_reward, update)
 
         policy_old_state_dict = {k: v.clone() for k, v in policy.policy.state_dict().items()}
         policy_old.policy.load_state_dict(policy_old_state_dict)
