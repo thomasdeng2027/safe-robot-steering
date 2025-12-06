@@ -1,11 +1,17 @@
 # Steering Robots Safely
 <img width="1234" height="772" alt="ArchitectureDiagram" src="https://github.com/user-attachments/assets/0890dcef-9681-41d4-9a15-9365b5814249" />
 
+# **Abstract**
+
+We explore fine-tuning SmolVLA on long-horizon robotic manipulation tasks using GRPO, a lightweight reinforcement learning method that improves upon traditional actor-critic algorithms such as PPO while removing the need for a learned value function. Our goal is to evaluate whether GRPO can refine pretrained VLA policies under hardware constraints and sparse reward conditions, using the LIBERO benchmark for simulation. Despite rollout throughput limiting large-scale experimentation, GRPO demonstrated the ability to incorporate meaningful updates without degrading pretrained performance, indicating potential for further improvement with faster hardware and larger training budgets.
+
+A parallel research direction concerns how reinforcement learning alters the internal mechanisms of VLA models. Inspired by recent mechanistic interpretability work—including the identification of semantically meaningful activation directions (e.g., “fast,” “slow”) that steer robot behavior—we aimed to analyze how GRPO fine-tuning modifies SmolVLA’s representations and action-selection circuits. Due to time constraints, we were unable to complete this analysis, but early steerability experiments show a strong negative correlation between activation steering strength and robot speed, suggesting rich structure for future interpretability work.
+
+Overall, our preliminary results highlight both the promise of GRPO for efficient VLA fine-tuning and the need for continued investigation into how RL updates reshape the internal computation of modern vision-language-action models.
+
 # Project Setup and Usage
 
 This README describes how to set up the environment, install dependencies, configure paths, and run TensorBoard locally and on Google Cloud.
-
----
 
 ## Installation
 
