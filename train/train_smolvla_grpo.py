@@ -11,24 +11,20 @@ import logging
 
 MAX_STEPS = 520
 GROUP_SIZE = 4
-UPDATE_EPOCHS = 1
+UPDATE_EPOCHS = 3
 UPDATE_CHUNK_SIZE = 5
 EULER_STEP_NOISE_STD = 0.3
 INIT_LOG_STD = -2
 GRPO_EPSILON = 0.2
 
-# TODO: change to logging module for speed/qol
-
-
-
 logger = logging.getLogger("rollout")
-logger.setLevel(logging.INFO) 
+logger.setLevel(logging.INFO)
+logger.propagate = False  # Prevent duplicate propagation to root logger
 if not logger.handlers:
     handler = logging.StreamHandler()
-    formatter = logging.Formatter("[%(name)s] %(message)s")
+    formatter = logging.Formatter("%(message)s")  # Just use the message as-is
     handler.setFormatter(formatter)
     logger.addHandler(handler)
-
 
 def rollout_one_trajectory(env, policy_old, language,  group_num, rollout_idx=None):
     logger.info("-" * 60)
@@ -49,7 +45,7 @@ def rollout_one_trajectory(env, policy_old, language,  group_num, rollout_idx=No
 
         env_action = action.cpu().numpy()[0]
 
-        logger.info(f"[ROLLOUT {rollout_idx} step {step:03d} GROUP {group_num}] reward={float(total_reward):+.3f} "
+        logger.debug(f"[ROLLOUT {rollout_idx} step {step:03d} GROUP {group_num}] reward={float(total_reward):+.3f} "
               f"action_norm={float(torch.norm(unsquished_action)):.4f} "
               f"logp={float(log_prob):+.4f}")
 
@@ -64,8 +60,7 @@ def rollout_one_trajectory(env, policy_old, language,  group_num, rollout_idx=No
             logger.info(f"[ROLLOUT] Episode finished early at step {step}")
             break
 
-    logger.info(f"[ROLLOUT DONE] total_reward={total_reward:.3f}")
-    logger.info("-" * 60)
+    logger.info(f"[ROLLOUT DONE] total_reward={total_reward:.3f}\n{"-" * 60}")
 
     return {
         "obs": traj_obs,
