@@ -16,6 +16,15 @@ dependencies = [
     "imageio (>=2.37.2,<3.0.0)",
 ]
 
+[tool.poetry]
+packages = [
+    { include = "model" },
+    { include = "env" },
+    { include = "experiments" },
+    { include = "utils" },
+    { include = "mech_interp" },
+    { include = "train" },
+]
 
 # having this or not doesn't appear to matter, only running poetry add ./libero-local does. but this is weird
 [tool.poetry.dependencies] 
