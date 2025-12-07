@@ -27,6 +27,7 @@ git submodule update --init --recursive
 ## Environment Variables
 
 ```bash
+export PYTHONPATH="$HOME/safe-robot-steering:$PYTHONPATH"
 export MUJOCO_GL=osmesa
 export LD_PRELOAD=/lib/x86_64-linux-gnu/libstdc++.so.6
 
